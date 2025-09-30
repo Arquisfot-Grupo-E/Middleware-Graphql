@@ -1,0 +1,66 @@
+type Query {
+    # Queries del servicio de Reseñas
+    searchBooks(query: String!): [Book!]
+    book(id: ID!): Book
+    reviewsForBook(bookId: String!): [Review!]
+    myReviews: [Review!]
+
+    # Queries del servicio de Usuarios
+    me: UserProfile
+}
+
+type Mutation {
+    # Mutaciones del servicio de Usuarios
+    login(email: String!, password: String!): AuthPayload!
+    register(email: String!, password: String!, firstName: String!, lastName: String!): User!
+    
+    # Mutaciones del servicio de Reseñas
+    createReview(googleBookId: String!, content: String!, rating: Int!): Review!
+    updateReview(id: ID!, content: String, rating: Int): Review!
+    deleteReview(id: ID!): StatusResponse!
+}
+
+# --- Tipos de Datos ---
+
+# Tipos del servicio de Usuarios
+type AuthPayload {
+    access: String!
+    refresh: String!
+}
+
+type User {
+    id: ID!
+    email: String!
+    first_name: String!
+    last_name: String!
+}
+
+type UserProfile {
+    user: User!
+    avatar: String
+    bio: String
+}
+
+# Tipos del servicio de Reseñas
+type Book {
+    id: ID!
+    title: String
+    authors: [String!]
+    description: String
+    thumbnail: String
+}
+
+type Review {
+    id: ID!
+    user_id: String!
+    google_book_id: String!
+    content: String!
+    rating: Int!
+    karma_score: Int!
+    created_at: String!
+}
+
+# Tipo genérico para respuestas de éxito/error
+type StatusResponse {
+    detail: String!
+}
