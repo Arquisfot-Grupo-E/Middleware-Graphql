@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   gateway:
     build: .
@@ -10,8 +8,10 @@ services:
       - .env
     volumes:
       - ./gateway:/app/gateway
-    # --- Nota para usuarios de Linux ---
-    # Si estás en Linux (fuera de Docker Desktop), host.docker.internal
-    # no funciona por defecto. Descomenta la siguiente sección:
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - bookworm_network
+
+networks:
+  bookworm_network:
+    external: true
+    name: bookworm_network

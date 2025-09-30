@@ -12,7 +12,7 @@ type Query {
 type Mutation {
     # Mutaciones del servicio de Usuarios
     login(email: String!, password: String!): AuthPayload!
-    register(email: String!, password: String!, firstName: String!, lastName: String!): User!
+    register(email: String!, password: String!, firstName: String!, lastName: String!, description: String): User!
     
     # Mutaciones del servicio de Reseñas
     createReview(googleBookId: String!, content: String!, rating: Int!): Review!

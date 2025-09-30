@@ -8,6 +8,7 @@ load_dotenv()
 # Cargar URLs de los servicios
 USERS_SERVICE_URL = os.getenv("USERS_SERVICE_URL")
 REVIEWS_SERVICE_URL = os.getenv("REVIEWS_SERVICE_URL")
+RECOMMENDATIONS_SERVICE_URL = os.getenv("RECOMMENDATIONS_SERVICE_URL", "http://recommendations_service:8002")
 
 # Cargar el esquema desde el archivo
 type_defs = load_schema_from_path("gateway/schema.graphql")
@@ -62,6 +63,18 @@ async def resolve_me(_, info):
     url = f"{USERS_SERVICE_URL}/api/accounts/profile/"
     return await make_request("GET", url, info)
 
+# NUEVO: Recomendaciones
+# @query.field("recommendations")
+# async def resolve_recommendations(_, info, level=None):
+#     """
+#     Obtiene recomendaciones para el usuario actual
+#     level: "initial" | "searches" | "collaborative" | None (todas)
+#     """
+#     url = f"{RECOMMENDATIONS_SERVICE_URL}/api/v1/recommendations"
+#     if level:
+#         url += f"?level={level}"
+#     return await make_request("GET", url, info)
+
 # --- Resolvers para Mutaciones ---
 
 @mutation.field("login")
@@ -71,13 +84,14 @@ async def resolve_login(_, info, email, password):
     return await make_request("POST", url, json=payload)
 
 @mutation.field("register")
-async def resolve_register(_, info, email, password, firstName, lastName):
+async def resolve_register(_, info, email, password, firstName, lastName, description="None"):
     url = f"{USERS_SERVICE_URL}/api/accounts/register/"
     payload = {
         "email": email,
         "password": password,
         "first_name": firstName,
         "last_name": lastName,
+        "description": description or "" # <-- Añade el campo al payload
     }
     return await make_request("POST", url, json=payload)
 
@@ -105,6 +119,20 @@ async def resolve_update_review(_, info, id, content=None, rating=None):
 async def resolve_delete_review(_, info, id):
     url = f"{REVIEWS_SERVICE_URL}/reviews/{id}"
     return await make_request("DELETE", url, info)
+
+# # NUEVO: Guardar géneros del usuario
+# @mutation.field("saveGenres")
+# async def resolve_save_genres(_, info, genres):
+#     """Guarda los 3 géneros favoritos del usuario"""
+#     # 1. Guardar en servicio de usuarios
+#     url_users = f"{USERS_SERVICE_URL}/api/accounts/profile/genres/"
+#     await make_request("POST", url_users, info, json={"preferred_genres": genres})
+    
+#     # 2. Enviar al servicio de recomendaciones
+#     url_recs = f"{RECOMMENDATIONS_SERVICE_URL}/api/v1/user/genres"
+#     result = await make_request("POST", url_recs, info, json={"genres": genres})
+    
+#     return result
 
 # Crear el schema ejecutable
 schema = make_executable_schema(type_defs, query, mutation)
