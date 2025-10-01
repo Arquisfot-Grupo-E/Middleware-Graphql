@@ -1,3 +1,5 @@
+# gateway/schema.graphql
+
 type Query {
     # Queries del servicio de Reseñas
     searchBooks(query: String!): [Book!]
@@ -7,17 +9,37 @@ type Query {
 
     # Queries del servicio de Usuarios
     me: UserProfile
+    
+    # Queries de Recomendaciones
+    recommendations(level: String): [Recommendation!]
 }
 
 type Mutation {
     # Mutaciones del servicio de Usuarios
     login(email: String!, password: String!): AuthPayload!
-    register(email: String!, password: String!, firstName: String!, lastName: String!, description: String): User!
+    register(
+        email: String!, 
+        password: String!, 
+        firstName: String!, 
+        lastName: String!, 
+        description: String
+    ): User!
     
     # Mutaciones del servicio de Reseñas
     createReview(googleBookId: String!, content: String!, rating: Int!): Review!
     updateReview(id: ID!, content: String, rating: Int): Review!
     deleteReview(id: ID!): StatusResponse!
+    
+    # Mutaciones de Recomendaciones
+    saveGenres(genres: [String!]!): GenreResponse!
+    searchBook(
+        bookId: String!
+        title: String!
+        authors: [String!]
+        categories: [String!]
+        publishedDate: String
+        description: String
+    ): SearchBookResponse!
 }
 
 # --- Tipos de Datos ---
@@ -48,6 +70,7 @@ type Book {
     authors: [String!]
     description: String
     thumbnail: String
+    categories: [String!]
 }
 
 type Review {
@@ -58,9 +81,36 @@ type Review {
     rating: Int!
     karma_score: Int!
     created_at: String!
+    updated_at: String!  # ⭐ AGREGAR ESTE CAMPO
 }
 
 # Tipo genérico para respuestas de éxito/error
 type StatusResponse {
     detail: String!
+}
+
+# Tipos para Recomendaciones
+type Recommendation {
+    id: String!
+    title: String!
+    authors: [String!]
+    categories: [String!]
+    avgRating: Float
+    nRatings: Int
+    reason: String
+}
+
+type GenreResponse {
+    user_id: String!
+    name: String
+    saved_genres: [String!]!
+}
+
+type SearchBookResponse {
+    user_id: String!
+    bookId: String!
+    title: String!
+    authors: [String!]
+    categories: [String!]
+    registered: Boolean!
 }
