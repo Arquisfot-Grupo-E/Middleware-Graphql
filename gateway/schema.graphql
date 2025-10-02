@@ -9,9 +9,12 @@ type Query {
 
     # Queries del servicio de Usuarios
     me: UserProfile
+    userProfile(userId: Int!): UserPublicProfile
     
     # Queries de Recomendaciones
-    recommendations(level: String): [Recommendation!]
+    recommendations(level: Int): [Recommendation!]
+    collaborativeRecommendations: [CollaborativeRecommendation!]
+    myRatings: [BookRating!]
 }
 
 type Mutation {
@@ -24,6 +27,12 @@ type Mutation {
         lastName: String!, 
         description: String
     ): User!
+    updateProfile(
+        firstName: String
+        lastName: String
+        avatar: String
+        bio: String
+    ): UserProfile!
     
     # Mutaciones del servicio de Reseñas
     createReview(googleBookId: String!, content: String!, rating: Int!): Review!
@@ -40,6 +49,8 @@ type Mutation {
         publishedDate: String
         description: String
     ): SearchBookResponse!
+    rateBook(bookId: String!, stars: Int!): RatingResponse!
+    confirmPreferences: StatusResponse!
 }
 
 # --- Tipos de Datos ---
@@ -55,10 +66,25 @@ type User {
     email: String!
     first_name: String!
     last_name: String!
+    has_selected_preferences: Boolean!
+    preferred_genres: [String!]
 }
 
 type UserProfile {
     user: User!
+    avatar: String
+    bio: String
+}
+
+type UserPublicProfile {
+    id: ID!
+    first_name: String!
+    last_name: String!
+    date_joined: String!
+    profile: PublicProfile!
+}
+
+type PublicProfile {
     avatar: String
     bio: String
 }
@@ -71,6 +97,8 @@ type Book {
     description: String
     thumbnail: String
     categories: [String!]
+    publisher: String
+    published_date: String
 }
 
 type Review {
@@ -81,7 +109,13 @@ type Review {
     rating: Int!
     karma_score: Int!
     created_at: String!
-    updated_at: String!  # ⭐ AGREGAR ESTE CAMPO
+    updated_at: String!
+    votes: [Vote!]
+}
+
+type Vote {
+    voter_id: String!
+    value: Int!
 }
 
 # Tipo genérico para respuestas de éxito/error
@@ -91,13 +125,33 @@ type StatusResponse {
 
 # Tipos para Recomendaciones
 type Recommendation {
-    id: String!
+    bookId: String!
     title: String!
     authors: [String!]
     categories: [String!]
+    publishedDate: String
+    description: String
     avgRating: Float
     nRatings: Int
     reason: String
+}
+
+type CollaborativeRecommendation {
+    bookId: String!
+    title: String!
+    authors: [String!]
+    recommended_by_user: String
+    because_both_rated_high: String
+    similar_user_rating: Int!
+    reason: String!
+}
+
+type BookRating {
+    bookId: String!
+    title: String!
+    authors: [String!]
+    stars: Int!
+    timestamp: String
 }
 
 type GenreResponse {
@@ -113,4 +167,14 @@ type SearchBookResponse {
     authors: [String!]
     categories: [String!]
     registered: Boolean!
+}
+
+type RatingResponse {
+    user_id: String!
+    bookId: String!
+    title: String
+    authors: [String!]
+    stars: Int!
+    timestamp: String
+    message: String
 }
