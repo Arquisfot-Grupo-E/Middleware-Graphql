@@ -15,6 +15,10 @@ type Query {
     recommendations(level: Int): [Recommendation!]
     collaborativeRecommendations: [CollaborativeRecommendation!]
     myRatings: [BookRating!]
+    
+    # Queries del servicio de Web Scraping
+    getBookPrices(bookTitle: String!): BookPricesResult!
+    getAllScrapedBooks: ScrapedBooksResult!
 }
 
 type Mutation {
@@ -177,4 +181,26 @@ type RatingResponse {
     stars: Int!
     timestamp: String
     message: String
+}
+
+# Tipos para Web Scraping de precios
+type BookPrice {
+    id: ID!
+    title: String!
+    price: Float!
+    source: String!
+    scraped_at: String!
+}
+
+type BookPricesResult {
+    book_title: String!
+    prices: [BookPrice!]!
+    status: String!
+    message: String!
+}
+
+type ScrapedBooksResult {
+    books: [BookPrice!]!
+    count: Int!
+    timestamp: String!
 }

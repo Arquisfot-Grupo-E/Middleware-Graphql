@@ -8,6 +8,7 @@ load_dotenv()
 USERS_SERVICE_URL = os.getenv("USERS_SERVICE_URL")
 REVIEWS_SERVICE_URL = os.getenv("REVIEWS_SERVICE_URL")
 RECOMMENDATIONS_SERVICE_URL = os.getenv("RECOMMENDATIONS_SERVICE_URL", "http://recommendations_service:8002")
+SCRAPING_SERVICE_URL = os.getenv("SCRAPING_SERVICE_URL", "http://book-scraper:8080")
 
 type_defs = load_schema_from_path("gateway/schema.graphql")
 
@@ -286,6 +287,108 @@ async def resolve_confirm_preferences(_, info):
     """
     url = f"{USERS_SERVICE_URL}/api/accounts/confirm-preferences/"
     return await make_request("POST", url, info)
+
+# ============================================
+# QUERIES - SERVICIO DE WEB SCRAPING
+# ============================================
+
+@query.field("getBookPrices")
+async def resolve_get_book_prices(_, info, bookTitle):
+    """
+    Obtiene los precios de un libro haciendo scraping en tiempo real.
+    Si el scraping no encuentra resultados, busca en la base de datos histórica.
+    """
+    # URL encode del título del libro
+    from urllib.parse import quote
+    encoded_title = quote(bookTitle)
+    
+    # Primero intentar scraping en tiempo real
+    scrape_url = f"{SCRAPING_SERVICE_URL}/scrape/{encoded_title}"
+    
+    try:
+        scrape_result = await make_request("GET", scrape_url, info)
+        
+        # Si el scraping encontró precios, devolverlos
+        if scrape_result.get("prices") and len(scrape_result.get("prices", [])) > 0:
+            return {
+                "book_title": scrape_result.get("book_title", bookTitle),
+                "prices": scrape_result.get("prices", []),
+                "status": scrape_result.get("status", "success"), 
+                "message": scrape_result.get("message", "Precios encontrados en tiempo real")
+            }
+        
+        # Si no encontró precios, buscar en la base de datos histórica
+        print(f"🔄 Scraping no encontró precios para '{bookTitle}', buscando en BD histórica...")
+        books_url = f"{SCRAPING_SERVICE_URL}/books"
+        books_result = await make_request("GET", books_url, info)
+        
+        # Filtrar libros que coincidan con el título buscado
+        historical_prices = []
+        if books_result.get("books"):
+            for book in books_result.get("books", []):
+                book_title_clean = book.get("title", "").lower().strip()
+                search_title_clean = bookTitle.lower().strip()
+                
+                # Buscar coincidencias parciales o exactas
+                if (search_title_clean in book_title_clean or 
+                    book_title_clean in search_title_clean or
+                    any(word in book_title_clean for word in search_title_clean.split() if len(word) > 3)):
+                    
+                    historical_prices.append({
+                        "id": book.get("id"),
+                        "title": book.get("title"),
+                        "price": book.get("price"),
+                        "source": book.get("source"),
+                        "scraped_at": book.get("scraped_at")
+                    })
+        
+        if historical_prices:
+            return {
+                "book_title": bookTitle,
+                "prices": historical_prices,
+                "status": "success",
+                "message": f"Precios encontrados en base de datos histórica ({len(historical_prices)} resultados)"
+            }
+        
+        # Si tampoco encontró en la BD histórica
+        return {
+            "book_title": bookTitle,
+            "prices": [],
+            "status": "error",
+            "message": "No se encontraron precios ni en tiempo real ni en datos históricos"
+        }
+        
+    except Exception as e:
+        print(f"❌ Error en resolve_get_book_prices: {e}")
+        return {
+            "book_title": bookTitle,
+            "prices": [],
+            "status": "error",
+            "message": f"Error obteniendo precios: {str(e)}"
+        }
+
+@query.field("getAllScrapedBooks")
+async def resolve_get_all_scraped_books(_, info):
+    """
+    Obtiene todos los libros con precios que han sido scrapeados anteriormente.
+    Útil para mostrar históricos de precios.
+    """
+    url = f"{SCRAPING_SERVICE_URL}/books"
+    
+    try:
+        result = await make_request("GET", url, info)
+        return {
+            "books": result.get("books", []),
+            "count": result.get("count", 0),
+            "timestamp": result.get("timestamp", "")
+        }
+    except Exception as e:
+        return {
+            "books": [],
+            "count": 0, 
+            "timestamp": "",
+            "message": f"Error obteniendo libros scrapeados: {str(e)}"
+        }
 
 # ============================================
 # CREACIÓN DEL SCHEMA
