@@ -124,11 +124,11 @@ services:
     expose:
       - "4000"  # Solo exponer dentro de Docker (Nginx hará el proxy)
     environment:
-      # URLs de los microservicios (nombres DNS dentro de backend_network)
-      USERS_SERVICE_URL: http://back-users:8001
-      REVIEWS_SERVICE_URL: http://back-reviews:8000
-      RECOMMENDATIONS_SERVICE_URL: http://back-recommendations:8002
-      SCRAPING_SERVICE_URL: http://back-scraping:8080
+      # URLs de los microservicios (usar nombres de contenedores)
+      USERS_SERVICE_URL: http://bookworm_users:8001
+      REVIEWS_SERVICE_URL: http://bookworm_reviews:8000
+      RECOMMENDATIONS_SERVICE_URL: http://bookworm_recommendations:8002
+      SCRAPING_SERVICE_URL: http://bookworm_scraping:8080
     volumes:
       - ./gateway:/app/gateway
     networks:
@@ -318,10 +318,11 @@ services:
     networks:
       - data_network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
   
   # ---------------------------------------------------------------------------
   # MySQL (Base de datos de precios de scraping) - LOCAL
