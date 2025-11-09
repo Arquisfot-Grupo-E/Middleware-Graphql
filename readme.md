@@ -1,11 +1,12 @@
 # 🌐 Middleware GraphQL - BookWorm
 
-Gateway GraphQL que unifica los tres microservicios del proyecto BookWorm: Usuarios, Reseñas y Recomendaciones.
+Gateway GraphQL que unifica los microservicios del proyecto BookWorm con **arquitectura de red segmentada**.
 
 ## 🚀 Características
 
 - **Unificación de APIs**: Un solo endpoint GraphQL para todos los servicios
 - **Autenticación JWT**: Propagación automática de tokens de autenticación
+- **Segmentación de Red**: Arquitectura de 3 capas (DMZ, Backend, Data)
 - **Sistema de Recomendaciones de 3 Niveles**:
   - Nivel 1: Por géneros favoritos
   - Nivel 2: Por búsquedas/historial
@@ -14,37 +15,184 @@ Gateway GraphQL que unifica los tres microservicios del proyecto BookWorm: Usuar
 - **CRUD de reseñas con sistema de karma**
 - **Búsqueda de libros usando Google Books API**
 
+## 🏗️ Arquitectura de Red Segmentada
+
+La plataforma implementa **3 redes aisladas** para mayor seguridad:
+
+```
+🟢 DMZ Network (172.20.0.0/24) - Zona Pública
+   ├─ Frontend React
+   └─ GraphQL Gateway (interfaz pública)
+
+🟡 Backend Network (172.21.0.0/24) - Microservicios
+   ├─ GraphQL Gateway (interfaz privada)
+   ├─ Back-users
+   ├─ Back-reviews
+   ├─ Back-recommendations
+   └─ Back-Web_Scraping
+
+🔴 Data Network (172.22.0.0/24) - Bases de Datos (sin internet)
+   ├─ PostgreSQL (local)
+   ├─ MongoDB (local)
+   ├─ MySQL (local)
+   └─ Kafka (local)
+   
+   ☁️ Cloud:
+   └─ Neo4j Aura (recomendaciones)
+```
+
+**Beneficios de Seguridad:**
+- ✅ Frontend NO puede acceder directamente a bases de datos
+- ✅ Bases de datos aisladas sin acceso a internet
+- ✅ Gateway actúa como único punto de entrada
+- ✅ Principio de mínimo privilegio
+
 ## 📋 Requisitos Previos
 
-- Docker y Docker Compose
-- Los tres servicios backend ejecutándose:
-  - `Back-users` (Django) en puerto 8001
-  - `Back-reviews` (FastAPI) en puerto 8000
-  - `Back-recommendations` (FastAPI) en puerto 8002
+- **Docker** y **Docker Compose**
+- **Git Bash** o **WSL** (para Windows - ejecutar script de redes)
+- Todos los repositorios clonados en la misma carpeta padre:
+  ```
+  proyecto/
+  ├── Middleware-Graphql/
+  ├── Back-users/
+  ├── Back-reviews/
+  ├── Back-recommendations/
+  ├── Back-Web_Scraping/
+  └── Frontend/
+  ```
 
 ## 🛠️ Instalación y Configuración
 
-### 1. Configurar variables de entorno
+### Prerequisitos Adicionales: Neo4j Aura
+
+Este proyecto utiliza **Neo4j Aura** (base de datos en la nube) para el servicio de recomendaciones.
+
+Necesitas configurar las credenciales antes de iniciar.
+
+### Opción 1: Sistema Completo (Recomendado para Demo/Producción)
+
+#### 1. Configurar variables de entorno
 
 ```bash
+cd Middleware-Graphql/
+
 # Copiar el archivo de ejemplo
 cp .env.example .env
 
-# El archivo ya viene configurado para Docker, pero puedes editarlo si es necesario
+# Editar .env con tus credenciales reales de Neo4j Aura
 ```
 
-### 2. Levantar el middleware con Docker
+**Cómo obtener las credenciales de Neo4j Aura:**
+
+1. Ir a https://console.neo4j.io/
+2. Abrir tu instancia
+3. Tab "Connect" → Copiar:
+   - `NEO4J_URI` (ejemplo: `neo4j+s://xxxxxxxx.databases.neo4j.io`)
+   - `NEO4J_USER` (normalmente `neo4j`)
+   - `NEO4J_PASSWORD`
+
+#### 2. Configurar redes (solo una vez)
 
 ```bash
-# Desde el directorio del middleware
+bash scripts/setup-networks.sh
+```
+
+Este script crea las 3 redes segmentadas.
+
+**En Windows PowerShell:**
+```powershell
+# Alternativa manual si no tienes Git Bash:
+docker network create --driver bridge --subnet 172.20.0.0/24 dmz_network
+docker network create --driver bridge --subnet 172.21.0.0/24 backend_network
+docker network create --driver bridge --subnet 172.22.0.0/24 --internal data_network
+```
+
+#### 3. Levantar toda la plataforma
+
+```bash
+docker-compose -f docker-compose.full.yml up --build
+```
+
+**Acceder:**
+- Frontend: http://localhost:5173
+- GraphQL Playground: http://localhost:4000/graphql
+
+**Bases de datos que se levantan en Docker:**
+- ✅ PostgreSQL (usuarios) - Local
+- ✅ MongoDB (reviews) - Local
+- ✅ MySQL (scraping) - Local
+- ✅ Kafka (messaging) - Local
+
+**Bases de datos que NO se levantan (están en la nube):**
+- ☁️ Neo4j (Aura)
+
+### Opción 2: Solo Gateway (Desarrollo Individual)
+
+#### 1. Asegurar que las redes existen
+
+```bash
+bash scripts/setup-networks.sh
+```
+
+#### 2. Configurar variables de entorno para servicios individuales
+
+El servicio de recomendaciones necesita su propio `.env`:
+
+**Back-recommendations/.env:**
+```bash
+NEO4J_URI=neo4j+s://xxxxxxxx.databases.neo4j.io
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=tu_password_neo4j
+```
+
+#### 3. Levantar otros servicios necesarios
+
+```bash
+# En terminales separadas:
+cd ../Back-users && docker-compose up
+cd ../Back-reviews && docker-compose up
+cd ../Back-recommendations && docker-compose up
+```
+
+#### 4. Levantar el gateway
+
+```bash
+cd Middleware-Graphql/
 docker-compose up --build
 ```
 
 El gateway estará disponible en: `http://localhost:4000/graphql`
 
-### 3. Acceder al playground de GraphQL
+## 🔍 Verificar Segmentación de Red
 
-Abre tu navegador en `http://localhost:4000/graphql` para acceder al playground interactivo.
+### Ver las redes creadas
+
+```bash
+docker network ls | grep -E "dmz|backend|data"
+```
+
+### Inspeccionar una red
+
+```bash
+docker network inspect dmz_network
+```
+
+### Probar aislamiento (debe fallar)
+
+```bash
+# El frontend NO debe poder acceder a MongoDB
+docker exec bookworm_frontend ping bookworm_mongodb
+# Error esperado: "ping: bookworm_mongodb: Name or service not known" ✅
+```
+
+### Probar conexión permitida (debe funcionar)
+
+```bash
+# El frontend SÍ puede acceder al gateway
+docker exec bookworm_frontend ping graphql_gateway
+# Éxito: 64 bytes from 172.20.0.10 ✅
+```
 
 ## 🧪 Pruebas de Funcionamiento
 

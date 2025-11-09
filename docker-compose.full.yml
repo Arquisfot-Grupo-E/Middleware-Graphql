@@ -1,0 +1,329 @@
+# =============================================================================
+# DOCKER COMPOSE ORQUESTADOR - PLATAFORMA BOOKWORM COMPLETA
+# =============================================================================
+# Este archivo levanta TODA la plataforma BookWorm con segmentación de red.
+#
+# ARQUITECTURA DE 3 CAPAS:
+#   🟢 DMZ Network (172.20.0.0/24) - Zona pública
+#   🟡 Backend Network (172.21.0.0/24) - Microservicios
+#   🔴 Data Network (172.22.0.0/24) - Bases de datos (sin internet)
+#
+# PREREQUISITOS:
+#   1. Todos los repositorios clonados en la misma carpeta padre:
+#      proyecto/
+#      ├── Middleware-Graphql/
+#      ├── Back-users/
+#      ├── Back-reviews/
+#      ├── Back-recommendations/
+#      ├── Back-Web_Scraping/
+#      └── Frontend/
+#
+#   2. Crear las redes (una sola vez):
+#      bash scripts/setup-networks.sh
+#
+# USO:
+#   docker-compose -f docker-compose.full.yml up --build
+#
+# =============================================================================
+
+version: '3.8'
+
+# =============================================================================
+# DEFINICIÓN DE REDES SEGMENTADAS
+# =============================================================================
+networks:
+  # Red Pública: Servicios expuestos a internet
+  dmz_network:
+    external: true
+    name: dmz_network
+  
+  # Red de Aplicación: Lógica de negocio
+  backend_network:
+    external: true
+    name: backend_network
+  
+  # Red de Datos: Almacenamiento (SIN internet)
+  data_network:
+    external: true
+    name: data_network
+
+# =============================================================================
+# SERVICIOS
+# =============================================================================
+services:
+  
+  # ===========================================================================
+  # CAPA DMZ (Zona Pública)
+  # ===========================================================================
+  
+  # ---------------------------------------------------------------------------
+  # Frontend React
+  # ---------------------------------------------------------------------------
+  frontend:
+    build: ../Frontend
+    container_name: bookworm_frontend
+    ports:
+      - "5173:5173"
+    environment:
+      # URL del GraphQL Gateway (dentro de la red Docker)
+      VITE_GRAPHQL_URL: http://graphql-gateway:4000/graphql
+    # NO usar volúmenes en producción - usar el build compilado
+    networks:
+      - dmz_network
+    depends_on:
+      graphql-gateway:
+        condition: service_healthy
+    restart: on-failure
+  
+  # ---------------------------------------------------------------------------
+  # GraphQL Gateway (Dual-Homed: DMZ + Backend)
+  # ---------------------------------------------------------------------------
+  # Este servicio actúa como puente entre la zona pública y privada.
+  # Tiene 2 interfaces de red:
+  #   - 172.20.0.10 (dmz_network): Recibe peticiones del frontend
+  #   - 172.21.0.10 (backend_network): Envía peticiones a microservicios
+  # ---------------------------------------------------------------------------
+  graphql-gateway:
+    build: .
+    container_name: bookworm_gateway
+    ports:
+      - "4000:4000"
+    environment:
+      # URLs de los microservicios (nombres DNS dentro de backend_network)
+      USERS_SERVICE_URL: http://back-users:8001
+      REVIEWS_SERVICE_URL: http://back-reviews:8000
+      RECOMMENDATIONS_SERVICE_URL: http://back-recommendations:8002
+      SCRAPING_SERVICE_URL: http://back-scraping:8080
+    volumes:
+      - ./gateway:/app/gateway
+    networks:
+      dmz_network:
+        ipv4_address: 172.20.0.10
+      backend_network:
+        ipv4_address: 172.21.0.10
+    depends_on:
+      - back-users
+      - back-reviews
+      - back-recommendations
+      - back-scraping
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/graphql || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+  
+  # ===========================================================================
+  # CAPA BACKEND (Microservicios de Aplicación)
+  # ===========================================================================
+  
+  # ---------------------------------------------------------------------------
+  # Back-users (Django + PostgreSQL)
+  # ---------------------------------------------------------------------------
+  back-users:
+    build: ../Back-users
+    container_name: bookworm_users
+    expose:
+      - "8001"  # Solo accesible dentro de Docker (no al host)
+    environment:
+      # PostgreSQL Local (contenedor en data_network)
+      DB_ENGINE: django.db.backends.postgresql
+      DB_NAME: ${POSTGRES_DB:-users_db}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_HOST: postgres-db
+      DB_PORT: 5432
+    volumes:
+      - ../Back-users:/app
+    networks:
+      - backend_network
+      - data_network     # Accede a PostgreSQL local
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    restart: on-failure
+    command: sh -c "sleep 5 && python manage.py migrate && python manage.py runserver 0.0.0.0:8001"
+  
+  # ---------------------------------------------------------------------------
+  # Back-reviews (FastAPI + MongoDB)
+  # ---------------------------------------------------------------------------
+  back-reviews:
+    build: ../Back-reviews
+    container_name: bookworm_reviews
+    expose:
+      - "8000"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      MONGO_DB_NAME: reviews_db
+      GOOGLE_BOOKS_API_URL: https://www.googleapis.com/books/v1/volumes
+      SECRET_KEY: django-insecure-b@y!skwfv@&_t=@29&l8p64!6pfz4!*zn)q(n^sed@91s=)&80
+      ALGORITHM: HS256
+      MONGO_USER: admin
+      MONGO_PASSWORD: admin
+    volumes:
+      - ../Back-reviews:/app
+    networks:
+      - backend_network
+      - data_network     # Accede a MongoDB
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+  
+  # ---------------------------------------------------------------------------
+  # Back-recommendations (FastAPI + Neo4j Aura)
+  # ---------------------------------------------------------------------------
+  back-recommendations:
+    build: ../Back-recommendations
+    container_name: bookworm_recommendations
+    expose:
+      - "8002"
+    environment:
+      # Neo4j Aura (Cloud)
+      NEO4J_URI: ${NEO4J_URI:-neo4j+s://7724e3af.databases.neo4j.io}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD}
+    volumes:
+      - ../Back-recommendations:/app
+    networks:
+      - backend_network  # Solo backend (BD en la nube, no necesita data_network)
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
+  
+  # ---------------------------------------------------------------------------
+  # Back-Web_Scraping (Go + MySQL + Kafka)
+  # ---------------------------------------------------------------------------
+  back-scraping:
+    build: ../Back-Web_Scraping
+    container_name: bookworm_scraping
+    expose:
+      - "8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: rootpassword
+      DB_NAME: book_prices
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: recommendation-scrapping
+    networks:
+      - backend_network
+      - data_network     # Accede a MySQL y Kafka
+    depends_on:
+      mysql:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+  
+  # ===========================================================================
+  # CAPA DATA (Bases de Datos y Mensajería LOCALES)
+  # ===========================================================================
+  # Incluye servicios que corren en Docker local.
+  # Solo Neo4j (Aura) está en la nube.
+  # ===========================================================================
+  
+  # ---------------------------------------------------------------------------
+  # Apache Kafka (Sistema de mensajería) - INICIA PRIMERO
+  # ---------------------------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.8.3
+    container_name: bookworm_kafka
+    environment:
+      KAFKA_KRAFT_MODE: 'true'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      CLUSTER_ID: '1L6g7nGhU-eAKfL--X25wo'
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - data_network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  
+  # ---------------------------------------------------------------------------
+  # PostgreSQL (Base de datos de usuarios) - LOCAL
+  # ---------------------------------------------------------------------------
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: bookworm_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-users_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - data_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  # ---------------------------------------------------------------------------
+  # MongoDB (Base de datos de reseñas) - LOCAL
+  # ---------------------------------------------------------------------------
+  mongodb:
+    image: mongo:7.0
+    container_name: bookworm_mongodb
+    environment:
+      MONGO_INITDB_DATABASE: reviews_db
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - data_network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  # ---------------------------------------------------------------------------
+  # MySQL (Base de datos de precios de scraping) - LOCAL
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: bookworm_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: book_prices
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../Back-Web_Scraping/scripts:/docker-entrypoint-initdb.d
+    networks:
+      - data_network
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+# =============================================================================
+# VOLÚMENES PERSISTENTES
+# =============================================================================
+# Estos volúmenes mantienen los datos incluso si los contenedores se eliminan.
+# Para bases de datos LOCALES (PostgreSQL, MongoDB, MySQL).
+# Solo Neo4j (Aura) está en la nube.
+# =============================================================================
+volumes:
+  postgres_data:
+    name: bookworm_postgres_data
+  mongodb_data:
+    name: bookworm_mongodb_data
+  mysql_data:
+    name: bookworm_mysql_data
+  kafka_data:
+    name: bookworm_kafka_data

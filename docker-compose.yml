@@ -9,9 +9,24 @@ services:
     volumes:
       - ./gateway:/app/gateway
     networks:
-      - bookworm_network
+      - dmz_network      # Interfaz pública: recibe peticiones del frontend
+      - backend_network  # Interfaz privada: comunica con microservicios
 
+# =============================================================================
+# REDES SEGMENTADAS
+# =============================================================================
+# El Gateway requiere acceso a 2 redes:
+#   - dmz_network: Para comunicarse con el frontend (zona pública)
+#   - backend_network: Para comunicarse con los microservicios (zona privada)
+#
+# PREREQUISITO: Las redes deben existir antes de levantar el servicio.
+# Ejecutar: bash scripts/setup-networks.sh
+# =============================================================================
 networks:
-  bookworm_network:
+  dmz_network:
     external: true
-    name: bookworm_network
+    name: dmz_network
+  
+  backend_network:
+    external: true
+    name: backend_network
