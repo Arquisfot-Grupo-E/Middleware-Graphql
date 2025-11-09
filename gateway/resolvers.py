@@ -5,10 +5,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-USERS_SERVICE_URL = os.getenv("USERS_SERVICE_URL")
-REVIEWS_SERVICE_URL = os.getenv("REVIEWS_SERVICE_URL")
-RECOMMENDATIONS_SERVICE_URL = os.getenv("RECOMMENDATIONS_SERVICE_URL", "http://recommendations_service:8002")
-SCRAPING_SERVICE_URL = os.getenv("SCRAPING_SERVICE_URL", "http://book-scraper:8080")
+USERS_SERVICE_URL = os.getenv("USERS_SERVICE_URL", "http://bookworm_users:8001")
+REVIEWS_SERVICE_URL = os.getenv("REVIEWS_SERVICE_URL", "http://bookworm_reviews:8000")
+RECOMMENDATIONS_SERVICE_URL = os.getenv("RECOMMENDATIONS_SERVICE_URL", "http://bookworm_recommendations:8002")
+SCRAPING_SERVICE_URL = os.getenv("SCRAPING_SERVICE_URL", "http://bookworm_scraping:8080")
 
 type_defs = load_schema_from_path("gateway/schema.graphql")
 
