@@ -57,22 +57,57 @@ services:
   # ===========================================================================
   
   # ---------------------------------------------------------------------------
-  # Frontend React
+  # Frontend React (Servidor interno)
   # ---------------------------------------------------------------------------
   frontend:
     build: ../Frontend
     container_name: bookworm_frontend
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"  # Solo exponer dentro de Docker
     environment:
-      # URL del GraphQL Gateway (dentro de la red Docker)
-      VITE_GRAPHQL_URL: http://graphql-gateway:4000/graphql
-    # NO usar volúmenes en producción - usar el build compilado
+      # Nginx manejará el routing, pero mantenemos esto por si se accede directamente
+      VITE_GRAPHQL_URL: https://localhost/graphql
     networks:
       - dmz_network
     depends_on:
-      graphql-gateway:
-        condition: service_healthy
+      - graphql-gateway
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Nginx Web (Proxy Inverso + HTTPS + Frontend)
+  # ---------------------------------------------------------------------------
+  nginx-web:
+    image: nginx:latest
+    container_name: bookworm_nginx
+    ports:
+      - "443:443"   # HTTPS - Punto de entrada principal
+      - "80:80"     # HTTP (redirige a HTTPS)
+    volumes:
+      - ../Frontend/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../Frontend/ssl:/etc/nginx/ssl:ro
+    networks:
+      - dmz_network
+    depends_on:
+      - frontend
+      - graphql-gateway
+    restart: on-failure
+
+  # ---------------------------------------------------------------------------
+  # Nginx Mobile (Proxy Inverso + HTTPS + CORS para API)
+  # ---------------------------------------------------------------------------
+  nginx-mobile:
+    image: nginx:latest
+    container_name: bookworm_nginx_mobile
+    ports:
+      - "8008:80"    # HTTP (redirige a HTTPS)
+      - "8443:443"   # HTTPS para la app móvil
+    volumes:
+      - ../Frontend-mobile/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../Frontend-mobile/ssl:/etc/nginx/ssl:ro
+    networks:
+      - dmz_network
+    depends_on:
+      - graphql-gateway
     restart: on-failure
   
   # ---------------------------------------------------------------------------
@@ -85,9 +120,9 @@ services:
   # ---------------------------------------------------------------------------
   graphql-gateway:
     build: .
-    container_name: bookworm_gateway
-    ports:
-      - "4000:4000"
+    container_name: graphql_gateway
+    expose:
+      - "4000"  # Solo exponer dentro de Docker (Nginx hará el proxy)
     environment:
       # URLs de los microservicios (nombres DNS dentro de backend_network)
       USERS_SERVICE_URL: http://back-users:8001
