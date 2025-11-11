@@ -6,6 +6,7 @@ Gateway GraphQL que unifica los microservicios del proyecto BookWorm con **arqui
 
 - **Unificación de APIs**: Un solo endpoint GraphQL para todos los servicios
 - **Autenticación JWT**: Propagación automática de tokens de autenticación
+- **🛡️ Web Application Firewall (WAF)**: ModSecurity 3 + OWASP CRS para protección web
 - **Segmentación de Red**: Arquitectura de 3 capas (DMZ, Backend, Data)
 - **Sistema de Recomendaciones de 3 Niveles**:
   - Nivel 1: Por géneros favoritos
@@ -15,33 +16,40 @@ Gateway GraphQL que unifica los microservicios del proyecto BookWorm con **arqui
 - **CRUD de reseñas con sistema de karma**
 - **Búsqueda de libros usando Google Books API**
 
-## 🏗️ Arquitectura de Red Segmentada
+## 🏗️ Arquitectura de Red Segmentada + WAF
 
-La plataforma implementa **3 redes aisladas** para mayor seguridad:
+La plataforma implementa **3 redes aisladas + WAF** para mayor seguridad:
 
 ```
+🛡️  WAF Layer (ModSecurity + OWASP CRS)
+   ├─ nginx-web-waf (Frontend Web) - Puerto 443
+   └─ nginx-mobile-waf (Frontend Mobile) - Puerto 8443
+   ↓
 🟢 DMZ Network (172.20.0.0/24) - Zona Pública
    ├─ Frontend React
    └─ GraphQL Gateway (interfaz pública)
-
+   ↓
 🟡 Backend Network (172.21.0.0/24) - Microservicios
    ├─ GraphQL Gateway (interfaz privada)
    ├─ Back-users
    ├─ Back-reviews
    ├─ Back-recommendations
    └─ Back-Web_Scraping
-
+   ↓
 🔴 Data Network (172.22.0.0/24) - Bases de Datos (sin internet)
    ├─ PostgreSQL (local)
    ├─ MongoDB (local)
    ├─ MySQL (local)
    └─ Kafka (local)
-   
+
    ☁️ Cloud:
    └─ Neo4j Aura (recomendaciones)
 ```
 
 **Beneficios de Seguridad:**
+- ✅ **WAF protege contra OWASP Top 10** (SQL Injection, XSS, CSRF, etc.)
+- ✅ **Rate limiting** para prevenir brute force y DDoS
+- ✅ **GraphQL security** (introspection blocking, query depth limiting)
 - ✅ Frontend NO puede acceder directamente a bases de datos
 - ✅ Bases de datos aisladas sin acceso a internet
 - ✅ Gateway actúa como único punto de entrada
@@ -193,6 +201,84 @@ docker exec bookworm_frontend ping bookworm_mongodb
 docker exec bookworm_frontend ping graphql_gateway
 # Éxito: 64 bytes from 172.20.0.10 ✅
 ```
+
+---
+
+## 🛡️ Web Application Firewall (WAF)
+
+El sistema incluye protección WAF con **ModSecurity 3** + **OWASP Core Rule Set 4.0** integrado en los servidores Nginx.
+
+### Protecciones Implementadas
+
+✅ **OWASP Top 10**: SQL Injection, XSS, CSRF, Path Traversal, Command Injection
+✅ **GraphQL Security**:
+  - Introspection blocking (`__schema`, `__type`)
+  - Query depth limiting (max 7 niveles)
+  - Batch query limiting (max 10 operaciones)
+✅ **Rate Limiting**:
+  - Login: 5 intentos/minuto por IP
+  - Register: 3 intentos/hora por IP
+  - API general: 30 req/segundo
+✅ **Anti-Bot**: Detección de scanners (sqlmap, nikto, nmap, etc.)
+✅ **Security Headers**: HSTS, CSP, X-Frame-Options, X-Content-Type-Options
+
+### Setup del WAF (Primera vez)
+
+```bash
+# 1. Navegar al directorio del frontend
+cd ../Frontend
+
+# 2. Ejecutar script de setup (automático)
+bash scripts/setup-waf.sh
+
+# Esto creará:
+# - Directorios de logs
+# - Certificados SSL autofirmados (desarrollo)
+# - Descarga unicode.mapping para ModSecurity
+# - Construye imagen Docker con WAF
+```
+
+### Verificar Funcionamiento del WAF
+
+```bash
+# Después de levantar docker-compose.full.yml:
+
+# 1. Health check
+curl -k https://localhost/health
+# Esperado: OK
+
+# 2. Test de SQL Injection (debe ser bloqueado)
+curl -k "https://localhost/?id=1' OR '1'='1"
+# Esperado: 403 Forbidden
+
+# 3. Suite completa de tests (60+ tests)
+cd ../Frontend
+bash scripts/test-waf.sh
+```
+
+### Monitoreo del WAF
+
+```bash
+# Dashboard interactivo
+cd ../Frontend
+bash scripts/monitor-waf.sh
+
+# Ver logs en tiempo real
+tail -f ../Frontend/logs/modsec/audit.log
+
+# Ver ataques bloqueados
+grep " 403 " ../Frontend/logs/nginx/access.log
+```
+
+### Documentación Completa del WAF
+
+Ver documentación detallada en:
+- `Frontend/WAF_README.md` - Quick start guide
+- `Frontend/WAF_DOCUMENTATION.md` - Manual completo (1300+ líneas)
+- `Frontend/WAF_CHEATSHEET.md` - Comandos rápidos
+- `Frontend/PRODUCTION_DEPLOYMENT.md` - Guía de producción
+
+---
 
 ## 🧪 Pruebas de Funcionamiento
 

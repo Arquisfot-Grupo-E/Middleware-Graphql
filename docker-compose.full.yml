@@ -1,9 +1,11 @@
 # =============================================================================
-# DOCKER COMPOSE ORQUESTADOR - PLATAFORMA BOOKWORM COMPLETA
+# DOCKER COMPOSE ORQUESTADOR - PLATAFORMA BOOKWORM COMPLETA CON WAF
 # =============================================================================
-# Este archivo levanta TODA la plataforma BookWorm con segmentación de red.
+# Este archivo levanta TODA la plataforma BookWorm con segmentación de red
+# y Web Application Firewall (ModSecurity + OWASP CRS).
 #
-# ARQUITECTURA DE 3 CAPAS:
+# ARQUITECTURA DE 3 CAPAS + WAF:
+#   🛡️  WAF Layer (ModSecurity) - Protección web
 #   🟢 DMZ Network (172.20.0.0/24) - Zona pública
 #   🟡 Backend Network (172.21.0.0/24) - Microservicios
 #   🔴 Data Network (172.22.0.0/24) - Bases de datos (sin internet)
@@ -21,8 +23,17 @@
 #   2. Crear las redes (una sola vez):
 #      bash scripts/setup-networks.sh
 #
+#   3. Setup del WAF (primera vez):
+#      cd ../Frontend && bash scripts/setup-waf.sh
+#
 # USO:
 #   docker-compose -f docker-compose.full.yml up --build
+#
+# NOTAS:
+#   - El WAF (nginx-web-waf) protege el frontend web contra ataques
+#   - OWASP Top 10 coverage + GraphQL specific protections
+#   - Rate limiting: Login (5/min), Register (3/h), API (30/s)
+#   - Logs disponibles en: Frontend/logs/nginx y Frontend/logs/modsec
 #
 # =============================================================================
 
@@ -60,7 +71,7 @@ services:
   # Frontend React (Servidor interno)
   # ---------------------------------------------------------------------------
   frontend:
-    build: ../Frontend
+    build: ../../front/Frontend
     container_name: bookworm_frontend
     expose:
       - "5173"  # Solo exponer dentro de Docker
@@ -74,41 +85,95 @@ services:
     restart: on-failure
 
   # ---------------------------------------------------------------------------
-  # Nginx Web (Proxy Inverso + HTTPS + Frontend)
+  # Nginx Web WAF (Proxy Inverso + HTTPS + ModSecurity WAF + Frontend)
   # ---------------------------------------------------------------------------
-  nginx-web:
-    image: nginx:latest
-    container_name: bookworm_nginx
+  # Este servicio reemplaza el Nginx básico con un Nginx + ModSecurity WAF
+  # para protección contra ataques web (OWASP Top 10, GraphQL, Rate Limiting)
+  # ---------------------------------------------------------------------------
+  nginx-web-waf:
+    build:
+      context: ../../front/Frontend
+      dockerfile: Dockerfile.nginx
+    image: bookworm-nginx-waf:latest
+    container_name: bookworm_nginx_waf
     ports:
       - "443:443"   # HTTPS - Punto de entrada principal
       - "80:80"     # HTTP (redirige a HTTPS)
     volumes:
-      - ../Frontend/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ../Frontend/ssl:/etc/nginx/ssl:ro
+      # Configuración de Nginx con WAF
+      - ../../front/Frontend/nginx-waf.conf:/etc/nginx/nginx.conf:ro
+
+      # Configuración de ModSecurity
+      - ../../front/Frontend/modsec/modsecurity.conf:/etc/nginx/modsec/modsecurity.conf:ro
+      - ../../front/Frontend/modsec/unicode.mapping:/etc/nginx/modsec/unicode.mapping:ro
+      - ../../front/Frontend/modsec/blacklist-user-agents.txt:/etc/nginx/modsec/blacklist-user-agents.txt:ro
+      - ../../front/Frontend/modsec/blacklist-ips.txt:/etc/nginx/modsec/blacklist-ips.txt:ro
+      - ../../front/Frontend/modsec/custom-rules:/etc/nginx/modsec/custom-rules:ro
+
+      # Certificados SSL
+      - ../../front/Frontend/ssl:/etc/nginx/ssl:ro
+
+      # Logs persistentes
+      - ../../front/Frontend/logs/nginx:/var/log/nginx
+      - ../../front/Frontend/logs/modsec:/var/log/modsec
     networks:
       - dmz_network
     depends_on:
       - frontend
       - graphql-gateway
     restart: on-failure
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    environment:
+      - TZ=UTC
 
   # ---------------------------------------------------------------------------
-  # Nginx Mobile (Proxy Inverso + HTTPS + CORS para API)
+  # Nginx Mobile WAF (Proxy Inverso + HTTPS + WAF + CORS para API móvil)
   # ---------------------------------------------------------------------------
-  nginx-mobile:
-    image: nginx:latest
-    container_name: bookworm_nginx_mobile
+  # Protección WAF para la aplicación móvil Flutter
+  # Configuración más ligera que el web (solo GraphQL, sin assets estáticos)
+  # ---------------------------------------------------------------------------
+  nginx-mobile-waf:
+    build:
+      context: ../../front/Frontend
+      dockerfile: Dockerfile.nginx
+    image: bookworm-nginx-waf:latest
+    container_name: bookworm_nginx_mobile_waf
     ports:
       - "8008:80"    # HTTP (redirige a HTTPS)
       - "8443:443"   # HTTPS para la app móvil
     volumes:
-      - ../Frontend-mobile/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ../Frontend-mobile/ssl:/etc/nginx/ssl:ro
+      # Configuración Nginx mobile (reutilizamos la misma imagen WAF)
+      - ../../front/Frontend-mobile/nginx.conf:/etc/nginx/nginx.conf:ro
+
+      # Configuración ModSecurity (compartida con web)
+      - ../../front/Frontend/modsec/modsecurity.conf:/etc/nginx/modsec/modsecurity.conf:ro
+      - ../../front/Frontend/modsec/unicode.mapping:/etc/nginx/modsec/unicode.mapping:ro
+      - ../../front/Frontend/modsec/blacklist-user-agents.txt:/etc/nginx/modsec/blacklist-user-agents.txt:ro
+      - ../../front/Frontend/modsec/blacklist-ips.txt:/etc/nginx/modsec/blacklist-ips.txt:ro
+      - ../../front/Frontend/modsec/custom-rules:/etc/nginx/modsec/custom-rules:ro
+
+      # Certificados SSL mobile
+      - ../../front/Frontend-mobile/ssl:/etc/nginx/ssl:ro
+
+      # Logs separados para mobile
+      - ../../front/Frontend-mobile/logs/nginx:/var/log/nginx
+      - ../../front/Frontend-mobile/logs/modsec:/var/log/modsec
     networks:
       - dmz_network
     depends_on:
       - graphql-gateway
     restart: on-failure
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    environment:
+      - TZ=UTC
   
   # ---------------------------------------------------------------------------
   # GraphQL Gateway (Dual-Homed: DMZ + Backend)
@@ -156,7 +221,7 @@ services:
   # Back-users (Django + PostgreSQL)
   # ---------------------------------------------------------------------------
   back-users:
-    build: ../Back-users
+    build: ../../backend/Back-users
     container_name: bookworm_users
     expose:
       - "8001"  # Solo accesible dentro de Docker (no al host)
@@ -169,7 +234,7 @@ services:
       DB_HOST: postgres-db
       DB_PORT: 5432
     volumes:
-      - ../Back-users:/app
+      - ../../backend/Back-users:/app
     networks:
       - backend_network
       - data_network     # Accede a PostgreSQL local
@@ -183,7 +248,8 @@ services:
   # Back-reviews (FastAPI + MongoDB)
   # ---------------------------------------------------------------------------
   back-reviews:
-    build: ../Back-reviews
+    # build: ../Back-reviews
+    build: ../../backend/Back-reviews
     container_name: bookworm_reviews
     expose:
       - "8000"
@@ -196,7 +262,7 @@ services:
       MONGO_USER: admin
       MONGO_PASSWORD: admin
     volumes:
-      - ../Back-reviews:/app
+      - ../../backend/Back-reviews:/app
     networks:
       - backend_network
       - data_network     # Accede a MongoDB
@@ -209,7 +275,7 @@ services:
   # Back-recommendations (FastAPI + Neo4j Aura)
   # ---------------------------------------------------------------------------
   back-recommendations:
-    build: ../Back-recommendations
+    build: ../../backend/Back-recommendations
     container_name: bookworm_recommendations
     expose:
       - "8002"
@@ -219,7 +285,7 @@ services:
       NEO4J_USER: ${NEO4J_USER:-neo4j}
       NEO4J_PASSWORD: ${NEO4J_PASSWORD}
     volumes:
-      - ../Back-recommendations:/app
+      - ../../backend/Back-recommendations:/app
     networks:
       - backend_network  # Solo backend (BD en la nube, no necesita data_network)
     command: uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
@@ -228,7 +294,7 @@ services:
   # Back-Web_Scraping (Go + MySQL + Kafka)
   # ---------------------------------------------------------------------------
   back-scraping:
-    build: ../Back-Web_Scraping
+    build: ../../backend/Back-Web_Scraping
     container_name: bookworm_scraping
     expose:
       - "8080"
@@ -335,7 +401,7 @@ services:
       MYSQL_DATABASE: book_prices
     volumes:
       - mysql_data:/var/lib/mysql
-      - ../Back-Web_Scraping/scripts:/docker-entrypoint-initdb.d
+      - ../../backend/Back-Web_Scraping/scripts:/docker-entrypoint-initdb.d
     networks:
       - data_network
     depends_on:
