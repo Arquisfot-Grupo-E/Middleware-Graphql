@@ -37,7 +37,7 @@
 #
 # =============================================================================
 
-version: '3.8'
+#version: '3.8'
 
 # =============================================================================
 # DEFINICIÓN DE REDES SEGMENTADAS
@@ -81,7 +81,10 @@ services:
     networks:
       - dmz_network
     depends_on:
-      - graphql-gateway
+      - graphql-gateway-1
+      - graphql-gateway-2
+      - graphql-gateway-3
+      - graphql-gateway-4
     restart: on-failure
 
   # ---------------------------------------------------------------------------
@@ -90,37 +93,25 @@ services:
   # Este servicio reemplaza el Nginx básico con un Nginx + ModSecurity WAF
   # para protección contra ataques web (OWASP Top 10, GraphQL, Rate Limiting)
   # ---------------------------------------------------------------------------
-  nginx-web-waf:
-    build:
-      context: ../../front/Frontend
-      dockerfile: Dockerfile.nginx
-    image: bookworm-nginx-waf:latest
-    container_name: bookworm_nginx_waf
+  nginx-web:
+    image: nginx:latest
+    container_name: bookworm_nginx
     ports:
       - "443:443"   # HTTPS - Punto de entrada principal
       - "80:80"     # HTTP (redirige a HTTPS)
     volumes:
-      # Configuración de Nginx con WAF
-      - ../../front/Frontend/nginx-waf.conf:/etc/nginx/nginx.conf:ro
 
-      # Configuración de ModSecurity
-      - ../../front/Frontend/modsec/modsecurity.conf:/etc/nginx/modsec/modsecurity.conf:ro
-      - ../../front/Frontend/modsec/unicode.mapping:/etc/nginx/modsec/unicode.mapping:ro
-      - ../../front/Frontend/modsec/blacklist-user-agents.txt:/etc/nginx/modsec/blacklist-user-agents.txt:ro
-      - ../../front/Frontend/modsec/blacklist-ips.txt:/etc/nginx/modsec/blacklist-ips.txt:ro
-      - ../../front/Frontend/modsec/custom-rules:/etc/nginx/modsec/custom-rules:ro
-
-      # Certificados SSL
-      - ../../front/Frontend/ssl:/etc/nginx/ssl:ro
-
-      # Logs persistentes
-      - ../../front/Frontend/logs/nginx:/var/log/nginx
-      - ../../front/Frontend/logs/modsec:/var/log/modsec
+      - ../Frontend/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../Frontend/ssl:/etc/nginx/ssl:ro
+      
     networks:
       - dmz_network
     depends_on:
       - frontend
-      - graphql-gateway
+      - graphql-gateway-1
+      - graphql-gateway-2
+      - graphql-gateway-3
+      - graphql-gateway-4
     restart: on-failure
     healthcheck:
       test: ["CMD", "nginx", "-t"]
@@ -136,44 +127,7 @@ services:
   # Protección WAF para la aplicación móvil Flutter
   # Configuración más ligera que el web (solo GraphQL, sin assets estáticos)
   # ---------------------------------------------------------------------------
-  nginx-mobile-waf:
-    build:
-      context: ../../front/Frontend
-      dockerfile: Dockerfile.nginx
-    image: bookworm-nginx-waf:latest
-    container_name: bookworm_nginx_mobile_waf
-    ports:
-      - "8008:80"    # HTTP (redirige a HTTPS)
-      - "8443:443"   # HTTPS para la app móvil
-    volumes:
-      # Configuración Nginx mobile (reutilizamos la misma imagen WAF)
-      - ../../front/Frontend-mobile/nginx.conf:/etc/nginx/nginx.conf:ro
-
-      # Configuración ModSecurity (compartida con web)
-      - ../../front/Frontend/modsec/modsecurity.conf:/etc/nginx/modsec/modsecurity.conf:ro
-      - ../../front/Frontend/modsec/unicode.mapping:/etc/nginx/modsec/unicode.mapping:ro
-      - ../../front/Frontend/modsec/blacklist-user-agents.txt:/etc/nginx/modsec/blacklist-user-agents.txt:ro
-      - ../../front/Frontend/modsec/blacklist-ips.txt:/etc/nginx/modsec/blacklist-ips.txt:ro
-      - ../../front/Frontend/modsec/custom-rules:/etc/nginx/modsec/custom-rules:ro
-
-      # Certificados SSL mobile
-      - ../../front/Frontend-mobile/ssl:/etc/nginx/ssl:ro
-
-      # Logs separados para mobile
-      - ../../front/Frontend-mobile/logs/nginx:/var/log/nginx
-      - ../../front/Frontend-mobile/logs/modsec:/var/log/modsec
-    networks:
-      - dmz_network
-    depends_on:
-      - graphql-gateway
-    restart: on-failure
-    healthcheck:
-      test: ["CMD", "nginx", "-t"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    environment:
-      - TZ=UTC
+ 
   
   # ---------------------------------------------------------------------------
   # GraphQL Gateway (Dual-Homed: DMZ + Backend)
@@ -183,9 +137,9 @@ services:
   #   - 172.20.0.10 (dmz_network): Recibe peticiones del frontend
   #   - 172.21.0.10 (backend_network): Envía peticiones a microservicios
   # ---------------------------------------------------------------------------
-  graphql-gateway:
+  graphql-gateway-1:
     build: .
-    container_name: graphql_gateway
+    container_name: graphql_gateway_1
     expose:
       - "4000"  # Solo exponer dentro de Docker (Nginx hará el proxy)
     environment:
@@ -201,6 +155,96 @@ services:
         ipv4_address: 172.20.0.10
       backend_network:
         ipv4_address: 172.21.0.10
+    depends_on:
+      - back-users
+      - back-reviews
+      - back-recommendations
+      - back-scraping
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/graphql || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  graphql-gateway-2:
+    build: .
+    container_name: graphql_gateway_2
+    expose:
+      - "4000"  # Solo exponer dentro de Docker (Nginx hará el proxy)
+    environment:
+      # URLs de los microservicios (usar nombres de contenedores)
+      USERS_SERVICE_URL: http://bookworm_users:8001
+      REVIEWS_SERVICE_URL: http://bookworm_reviews:8000
+      RECOMMENDATIONS_SERVICE_URL: http://bookworm_recommendations:8002
+      SCRAPING_SERVICE_URL: http://bookworm_scraping:8080
+    volumes:
+      - ./gateway:/app/gateway
+    networks:
+      dmz_network:
+        ipv4_address: 172.20.0.11
+      backend_network:
+        ipv4_address: 172.21.0.11
+    depends_on:
+      - back-users
+      - back-reviews
+      - back-recommendations
+      - back-scraping
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/graphql || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  graphql-gateway-3:
+    build: .
+    container_name: graphql_gateway_3
+    expose:
+      - "4000"  # Solo exponer dentro de Docker (Nginx hará el proxy)
+    environment:
+      # URLs de los microservicios (usar nombres de contenedores)
+      USERS_SERVICE_URL: http://bookworm_users:8001
+      REVIEWS_SERVICE_URL: http://bookworm_reviews:8000
+      RECOMMENDATIONS_SERVICE_URL: http://bookworm_recommendations:8002
+      SCRAPING_SERVICE_URL: http://bookworm_scraping:8080
+    volumes:
+      - ./gateway:/app/gateway
+    networks:
+      dmz_network:
+        ipv4_address: 172.20.0.12
+      backend_network:
+        ipv4_address: 172.21.0.12
+    depends_on:
+      - back-users
+      - back-reviews
+      - back-recommendations
+      - back-scraping
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:4000/graphql || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  graphql-gateway-4:
+    build: .
+    container_name: graphql_gateway_4
+    expose:
+      - "4000"  # Solo exponer dentro de Docker (Nginx hará el proxy)
+    environment:
+      # URLs de los microservicios (usar nombres de contenedores)
+      USERS_SERVICE_URL: http://bookworm_users:8001
+      REVIEWS_SERVICE_URL: http://bookworm_reviews:8000
+      RECOMMENDATIONS_SERVICE_URL: http://bookworm_recommendations:8002
+      SCRAPING_SERVICE_URL: http://bookworm_scraping:8080
+    volumes:
+      - ./gateway:/app/gateway
+    networks:
+      dmz_network:
+        ipv4_address: 172.20.0.13
+      backend_network:
+        ipv4_address: 172.21.0.13
     depends_on:
       - back-users
       - back-reviews
