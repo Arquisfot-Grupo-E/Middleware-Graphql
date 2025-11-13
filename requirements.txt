@@ -3,3 +3,6 @@ uvicorn[standard]
 ariadne
 httpx
 python-dotenv
+slowapi  # Rate limiting para FastAPI
+graphql-core  # Para análisis de queries
+pyjwt  # Para decodificar JWT y rate limiting por usuario
